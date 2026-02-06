@@ -18,7 +18,7 @@ async function ensureDataDir() {
   } catch {
     await fs.writeFile(
       DB_FILE,
-      JSON.stringify({ users: {}, pendingPayments: [], approvals: {}, points: {}, withdrawals: [], videoProgress: {} }, null, 2),
+      JSON.stringify({ users: {}, pendingPayments: [], approvals: [], points: {}, withdrawals: [], videoProgress: {} }, null, 2),
       'utf8'
     );
   }
@@ -28,14 +28,14 @@ export async function createDb() {
   await ensureDataDir();
 
   const adapter = new JSONFile(DB_FILE);
-  const db = new Low(adapter, { users: {}, pendingPayments: [], approvals: {}, points: {}, withdrawals: [], videoProgress: {} });
+  const db = new Low(adapter, { users: {}, pendingPayments: [], approvals: [], points: {}, withdrawals: [], videoProgress: {} });
   await db.read();
-  db.data ||= { users: {}, pendingPayments: [], approvals: {}, points: {}, withdrawals: [], videoProgress: {} };
+  db.data ||= { users: {}, pendingPayments: [], approvals: [], points: {}, withdrawals: [], videoProgress: {} };
 
   // Ensure all necessary collections exist
   if (!db.data.users) db.data.users = {};
   if (!db.data.pendingPayments) db.data.pendingPayments = [];
-  if (!db.data.approvals) db.data.approvals = {};
+  if (!Array.isArray(db.data.approvals)) db.data.approvals = [];
   if (!db.data.withdrawals) db.data.withdrawals = [];
   if (!db.data.points) db.data.points = {};
   if (!db.data.videoProgress) db.data.videoProgress = {};
