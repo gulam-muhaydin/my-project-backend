@@ -5,7 +5,7 @@ import { JSONFile } from 'lowdb/node';
 
 // Vercel serverless environment uses /tmp for writable files
 const IS_VERCEL = process.env.VERCEL || process.env.NODE_ENV === 'production';
-const DATA_DIR = IS_VERCEL ? '/tmp' : path.join(process.cwd(), 'backend', 'data');
+const DATA_DIR = IS_VERCEL ? '/tmp' : path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 async function ensureDataDir() {
