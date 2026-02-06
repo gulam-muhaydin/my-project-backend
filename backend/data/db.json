@@ -1,0 +1,18 @@
+{
+  "users": {
+    "admin@watchearn.com": {
+      "name": "Admin",
+      "email": "admin@watchearn.com",
+      "password": "admin",
+      "planId": "premium",
+      "createdAt": "2026-02-05T00:00:00.000Z"
+    },
+    "user@example.com": {
+      "name": "Test User",
+      "email": "user@example.com",
+      "password": "password123",
+      "planId": "basic",
+      "createdAt": "2026-02-05T00:00:00.000Z"
+    }
+  }
+}
