@@ -1,24 +1,64 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
 import { createDb } from '../db.js';
 
 dotenv.config();
 
 const app = express();
+const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret';
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@watchearn.com').toLowerCase();
 
 app.use(cors());
 app.use(express.json());
 
-function addApproval(db, payload) {
-  const approval = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-    ...payload
-  };
-  db.data.approvals.push(approval);
-  return approval;
+function getTokenFromRequest(req) {
+  const header = req.headers.authorization || '';
+  const parts = header.split(' ');
+  if (parts.length === 2 && parts[0] === 'Bearer') {
+    return parts[1];
+  }
+  return null;
+}
+
+function requireAuth(req, res, next) {
+  const token = getTokenFromRequest(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = payload;
+    return next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  return next();
+}
+
+function signToken(user) {
+  return jwt.sign(
+    { email: user.email, role: user.role },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+}
+
+function ensureUserDefaults(user) {
+  if (!user.role) {
+    user.role = user.email === ADMIN_EMAIL ? 'admin' : 'user';
+  }
+  if (!Array.isArray(user.purchases)) {
+    user.purchases = [];
+  }
+  return user;
 }
 
 app.get('/api/hello', (req, res) => {
@@ -28,7 +68,7 @@ app.get('/api/hello', (req, res) => {
   });
 });
 
-app.post('/api/login', async (req, res) => {
+async function loginHandler(req, res) {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -43,22 +83,27 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    addApproval(db, { type: 'login', email: normalizedEmail });
+    ensureUserDefaults(user);
     await db.write();
 
     const { password: _, ...userResponse } = user;
+    const token = signToken(user);
     return res.status(200).json({
       success: true,
       message: "Login successful",
+      token,
       user: userResponse
     });
   } catch (error) {
     console.error('Login Error:', error);
     return res.status(500).json({ error: "Internal server error" });
   }
-});
+}
 
-app.post('/api/register', async (req, res) => {
+app.post('/login', loginHandler);
+app.post('/api/login', loginHandler);
+
+async function registerHandler(req, res) {
   try {
     const { name, email, password } = req.body;
     if (!name || !email || !password) {
@@ -76,95 +121,82 @@ app.post('/api/register', async (req, res) => {
       name,
       email: normalizedEmail,
       password,
-      approved: false,
+      role: normalizedEmail === ADMIN_EMAIL ? 'admin' : 'user',
+      purchases: [],
       createdAt: new Date().toISOString()
     };
-    addApproval(db, { type: 'signup', email: normalizedEmail, name });
     await db.write();
 
     return res.status(201).json({
       success: true,
-      message: "Registration submitted for approval",
-      user: { name, email: normalizedEmail, approved: false }
+      message: "Registration successful",
+      user: { name, email: normalizedEmail, role: db.data.users[normalizedEmail].role }
     });
   } catch (error) {
     console.error('Registration Error:', error);
     return res.status(500).json({ error: "Internal server error" });
   }
-});
+}
 
-app.post('/api/plan', async (req, res) => {
+app.post('/register', registerHandler);
+app.post('/api/register', registerHandler);
+
+async function purchasePlanHandler(req, res) {
   try {
-    const { email, planId } = req.body;
-    if (!email || !planId) {
-      return res.status(400).json({ error: "Email and planId are required" });
+    const { planId } = req.body;
+    if (!planId) {
+      return res.status(400).json({ error: "planId is required" });
     }
 
     const db = await createDb();
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = req.user.email.toLowerCase().trim();
     const user = db.data.users && db.data.users[normalizedEmail];
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    user.planId = planId;
-    addApproval(db, { type: 'plan', email: normalizedEmail, planId });
+    ensureUserDefaults(user);
+    const purchase = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      planId,
+      purchasedAt: new Date().toISOString()
+    };
+    user.purchases.push(purchase);
     await db.write();
 
     return res.status(200).json({
       success: true,
-      message: "Plan submitted for approval",
-      planId
+      message: "Plan purchase successful",
+      purchase
     });
   } catch (error) {
     console.error('Plan Error:', error);
     return res.status(500).json({ error: "Internal server error" });
   }
-});
+}
 
-app.get('/api/admin/approvals', async (req, res) => {
+app.post('/purchase-plan', requireAuth, purchasePlanHandler);
+app.post('/api/plan', requireAuth, purchasePlanHandler);
+
+async function adminUsersHandler(req, res) {
   try {
     const db = await createDb();
-    return res.status(200).json({
-      success: true,
-      approvals: db.data.approvals || []
+    const users = Object.values(db.data.users || {}).map((user) => {
+      ensureUserDefaults(user);
+      const { password: _, ...safeUser } = user;
+      return safeUser;
     });
-  } catch (error) {
-    console.error('Approvals Error:', error);
-    return res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-app.post('/api/admin/approve', async (req, res) => {
-  try {
-    const { id, status } = req.body;
-    if (!id || !status) {
-      return res.status(400).json({ error: "id and status are required" });
-    }
-
-    const db = await createDb();
-    const approval = (db.data.approvals || []).find((a) => a.id === id);
-    if (!approval) {
-      return res.status(404).json({ error: "Approval not found" });
-    }
-
-    approval.status = status;
-    approval.updatedAt = new Date().toISOString();
-    if (approval.type === 'signup' && approval.email) {
-      const user = db.data.users && db.data.users[approval.email];
-      if (user) {
-        user.approved = status === 'approved';
-      }
-    }
-
     await db.write();
-    return res.status(200).json({ success: true, approval });
+    return res.status(200).json({ success: true, users });
   } catch (error) {
-    console.error('Approve Error:', error);
+    console.error('Admin Users Error:', error);
     return res.status(500).json({ error: "Internal server error" });
   }
-});
+}
+
+app.get('/admin/users', requireAuth, requireAdmin, adminUsersHandler);
+app.get('/api/admin/users', requireAuth, requireAdmin, adminUsersHandler);
 
 app.get('/', (req, res) => {
   res.send('WebX Backend is running!');
